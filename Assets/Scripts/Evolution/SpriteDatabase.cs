@@ -70,14 +70,15 @@ namespace Pokiwar.Evolution
 
         /// <summary>
         /// Returns the evolution tier for a given level.
-        /// Thresholds: Baby(1-4), Basic(5-14), Stage1(15-29), Stage2(30-49), Mega(50+)
+        /// Thresholds: Baby(1-4), Basic(5-14), Stage1(15-29), Stage2(30-99), Mega(100+)
+        /// Matches Pokiwar/Pokiguard evolution chain: Baby→Basic→Stage1→Stage2→Mega
         /// </summary>
         public static EvolutionTier GetTierForLevel(int level)
         {
-            if (level >= 50) return EvolutionTier.Mega;
-            if (level >= 30) return EvolutionTier.Stage2;
-            if (level >= 15) return EvolutionTier.Stage1;
-            if (level >= 5)  return EvolutionTier.Basic;
+            if (level >= 100) return EvolutionTier.Mega;
+            if (level >= 30)  return EvolutionTier.Stage2;
+            if (level >= 15)  return EvolutionTier.Stage1;
+            if (level >= 5)   return EvolutionTier.Basic;
             return EvolutionTier.Baby;
         }
 
@@ -86,11 +87,11 @@ namespace Pokiwar.Evolution
         /// </summary>
         public static int GetNextEvolutionLevel(int currentLevel)
         {
-            if (currentLevel < 5)  return 5;
-            if (currentLevel < 15) return 15;
-            if (currentLevel < 30) return 30;
-            if (currentLevel < 50) return 50;
-            return -1; // Max tier
+            if (currentLevel < 5)   return 5;
+            if (currentLevel < 15)  return 15;
+            if (currentLevel < 30)  return 30;
+            if (currentLevel < 100) return 100;
+            return -1; // Max tier (Mega)
         }
 
         public bool HasSprite(int level)

@@ -30,33 +30,33 @@ namespace Pokiwar.Tests
         }
 
         [Test]
-        public void GetTierForLevel_ReturnsStage2_ForLevel30To49()
+        public void GetTierForLevel_ReturnsStage2_ForLevel30To99()
         {
             Assert.AreEqual(EvolutionTier.Stage2, SpriteDatabase.GetTierForLevel(30));
-            Assert.AreEqual(EvolutionTier.Stage2, SpriteDatabase.GetTierForLevel(49));
+            Assert.AreEqual(EvolutionTier.Stage2, SpriteDatabase.GetTierForLevel(99));
         }
 
         [Test]
-        public void GetTierForLevel_ReturnsMega_ForLevel50Plus()
+        public void GetTierForLevel_ReturnsMega_ForLevel100Plus()
         {
-            Assert.AreEqual(EvolutionTier.Mega, SpriteDatabase.GetTierForLevel(50));
             Assert.AreEqual(EvolutionTier.Mega, SpriteDatabase.GetTierForLevel(100));
+            Assert.AreEqual(EvolutionTier.Mega, SpriteDatabase.GetTierForLevel(200));
         }
 
         [Test]
         public void GetNextEvolutionLevel_ReturnsCorrectThresholds()
         {
-            Assert.AreEqual(5, SpriteDatabase.GetNextEvolutionLevel(1));
-            Assert.AreEqual(15, SpriteDatabase.GetNextEvolutionLevel(5));
-            Assert.AreEqual(30, SpriteDatabase.GetNextEvolutionLevel(15));
-            Assert.AreEqual(50, SpriteDatabase.GetNextEvolutionLevel(30));
-            Assert.AreEqual(-1, SpriteDatabase.GetNextEvolutionLevel(50));
+            Assert.AreEqual(5,   SpriteDatabase.GetNextEvolutionLevel(1));
+            Assert.AreEqual(15,  SpriteDatabase.GetNextEvolutionLevel(5));
+            Assert.AreEqual(30,  SpriteDatabase.GetNextEvolutionLevel(15));
+            Assert.AreEqual(100, SpriteDatabase.GetNextEvolutionLevel(30));
+            Assert.AreEqual(-1,  SpriteDatabase.GetNextEvolutionLevel(100));
         }
 
         [Test]
         public void GetNextEvolutionLevel_ReturnsNegativeOne_AtMaxTier()
         {
-            Assert.AreEqual(-1, SpriteDatabase.GetNextEvolutionLevel(100));
+            Assert.AreEqual(-1, SpriteDatabase.GetNextEvolutionLevel(200));
         }
 
         [Test]
