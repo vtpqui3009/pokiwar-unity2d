@@ -1,5 +1,6 @@
 using UnityEngine;
 using Unity.Netcode;
+using System.Collections.Generic;
 using Pokiwar.Combat;
 using Pokiwar.Evolution;
 
@@ -8,6 +9,8 @@ namespace Pokiwar.Multiplayer
     /// <summary>
     /// Handles collision and combat synchronization between networked players.
     /// Server-authoritative damage validation with per-pair collision cooldown and knockback.
+    ///
+    /// Performance: uses Dictionary iteration without per-frame List allocation.
     /// </summary>
     public class PlayerSync : NetworkBehaviour
     {
@@ -18,29 +21,38 @@ namespace Pokiwar.Multiplayer
 
         private HealthController healthController;
         private EvolutionManager evolutionManager;
+        private BattleAnimationController battleAnimController;
         private Rigidbody2D rb;
 
         // Per-pair cooldown: key = other player's NetworkObjectId
-        private System.Collections.Generic.Dictionary<ulong, float> pairCooldowns
-            = new System.Collections.Generic.Dictionary<ulong, float>();
+        private readonly Dictionary<ulong, float> pairCooldowns = new Dictionary<ulong, float>();
+
+        // Reuse list to avoid per-frame allocation
+        private readonly List<ulong> expiredCooldownKeys = new List<ulong>();
 
         private void Awake()
         {
             healthController = GetComponent<HealthController>();
             evolutionManager = GetComponent<EvolutionManager>();
+            battleAnimController = GetComponent<BattleAnimationController>();
             rb = GetComponent<Rigidbody2D>();
         }
 
         private void Update()
         {
-            // Tick down per-pair cooldowns
-            var keys = new System.Collections.Generic.List<ulong>(pairCooldowns.Keys);
-            foreach (ulong key in keys)
+            // Tick down per-pair cooldowns without allocating a new list each frame
+            expiredCooldownKeys.Clear();
+            foreach (KeyValuePair<ulong, float> kvp in pairCooldowns)
             {
-                pairCooldowns[key] -= Time.deltaTime;
-                if (pairCooldowns[key] <= 0f)
-                    pairCooldowns.Remove(key);
+                float newTime = kvp.Value - Time.deltaTime;
+                if (newTime <= 0f)
+                    expiredCooldownKeys.Add(kvp.Key);
+                else
+                    pairCooldowns[kvp.Key] = newTime;
             }
+
+            foreach (ulong key in expiredCooldownKeys)
+                pairCooldowns.Remove(key);
         }
 
         private void OnCollisionEnter2D(Collision2D collision)
@@ -63,18 +75,26 @@ namespace Pokiwar.Multiplayer
             int myLevel = evolutionManager.GetLevel();
             int otherLevel = otherPlayer.evolutionManager.GetLevel();
 
-            // Anti-cheat: validate level difference
+            // Direction from this player to other (normalized)
+            Vector2 toOther = (otherPlayer.transform.position - transform.position).normalized;
+
             if (myLevel > otherLevel + minLevelDifferenceForDamage)
             {
                 float damage = CalculateDamage(myLevel, otherLevel);
                 otherPlayer.TakeDamageServerRpc(damage, OwnerClientId);
-                ApplyKnockbackClientRpc(otherPlayer.transform.position - transform.position);
+
+                // Lunge toward target, other player recoils
+                PlayLungeClientRpc(toOther);
+                otherPlayer.PlayRecoilClientRpc(-toOther);
             }
             else if (otherLevel > myLevel + minLevelDifferenceForDamage)
             {
                 float damage = otherPlayer.CalculateDamage(otherLevel, myLevel);
                 TakeDamageServerRpc(damage, otherPlayer.OwnerClientId);
-                otherPlayer.ApplyKnockbackClientRpc(transform.position - otherPlayer.transform.position);
+
+                // Other player lunges, this player recoils
+                otherPlayer.PlayLungeClientRpc(-toOther);
+                PlayRecoilClientRpc(toOther);
             }
 
             // Set per-pair cooldown
@@ -88,18 +108,29 @@ namespace Pokiwar.Multiplayer
         {
             if (damage <= 0f) return;
 
-            // Server-side validation: ensure damage is reasonable
+            // Server-side validation: clamp to reasonable range
             damage = Mathf.Clamp(damage, 0f, 500f);
             healthController?.TakeDamage(damage, null);
         }
 
         [ClientRpc]
-        private void ApplyKnockbackClientRpc(Vector3 direction)
+        private void PlayLungeClientRpc(Vector2 direction)
         {
-            if (!IsOwner || rb == null) return;
+            if (!IsOwner) return;
+            battleAnimController?.PlayLunge(direction);
+        }
 
-            Vector2 knockback = direction.normalized * knockbackForce;
-            rb.AddForce(knockback, ForceMode2D.Impulse);
+        [ClientRpc]
+        private void PlayRecoilClientRpc(Vector2 direction)
+        {
+            if (!IsOwner) return;
+
+            // Apply physics knockback
+            if (rb != null)
+                rb.AddForce(direction.normalized * knockbackForce, ForceMode2D.Impulse);
+
+            // Play visual recoil
+            battleAnimController?.PlayRecoil(direction);
         }
 
         public float CalculateDamage(int attackerLevel, int targetLevel)

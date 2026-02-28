@@ -7,6 +7,11 @@ namespace Pokiwar.Combat
 {
     /// <summary>
     /// Manages player health, shield, invincibility frames, poison DoT, and death/respawn logic.
+    ///
+    /// Fixes:
+    /// - CombatManager is cached in Awake (no FindObjectOfType in hot path)
+    /// - Level reduction on death is properly implemented via EvolutionManager.SetLevel()
+    /// - BattleAnimationController integrated for death/respawn visuals
     /// </summary>
     public class HealthController : MonoBehaviour
     {
@@ -35,7 +40,10 @@ namespace Pokiwar.Combat
         private bool isPoisoned;
         private float poisonTimer;
 
+        // Cached references
         private EvolutionManager evolutionManager;
+        private CombatManager combatManager;
+        private BattleAnimationController battleAnimController;
 
         public float CurrentHealth => currentHealth;
         public float MaxHealth => maxHealth;
@@ -53,6 +61,7 @@ namespace Pokiwar.Combat
         private void Awake()
         {
             evolutionManager = GetComponent<EvolutionManager>();
+            battleAnimController = GetComponent<BattleAnimationController>();
             maxHealth = baseMaxHealth;
             currentHealth = maxHealth;
             isDead = false;
@@ -60,6 +69,8 @@ namespace Pokiwar.Combat
 
         private void Start()
         {
+            // Cache CombatManager once at start (avoid FindObjectOfType in Die())
+            combatManager = FindObjectOfType<CombatManager>();
             ActivateSpawnShield();
         }
 
@@ -149,10 +160,18 @@ namespace Pokiwar.Combat
 
             OnDeath?.Invoke(killer);
 
-            CombatManager combatManager = FindObjectOfType<CombatManager>();
+            // Use cached reference (no FindObjectOfType)
             combatManager?.OnPlayerDefeated(gameObject, killer);
 
-            StartCoroutine(RespawnRoutine());
+            // Play death animation, then respawn
+            if (battleAnimController != null)
+            {
+                battleAnimController.PlayDeath(() => StartCoroutine(RespawnRoutine()));
+            }
+            else
+            {
+                StartCoroutine(RespawnRoutine());
+            }
         }
 
         private IEnumerator RespawnRoutine()
@@ -166,12 +185,12 @@ namespace Pokiwar.Combat
             if (GameManager.Instance != null)
                 transform.position = GameManager.Instance.GetRandomPosition();
 
-            // Lose half level on death (FFA mode)
+            // Lose half level on death (FFA mode) - properly implemented
             if (evolutionManager != null)
             {
                 int currentLevel = evolutionManager.GetLevel();
                 int newLevel = Mathf.Max(1, currentLevel / 2);
-                // Note: actual level reduction would require EvolutionManager.SetLevel() - handled via XP reset
+                evolutionManager.SetLevel(newLevel);
             }
 
             UpdateMaxHealthForLevel();
@@ -180,6 +199,10 @@ namespace Pokiwar.Combat
             isPoisoned = false;
 
             ActivateSpawnShield();
+
+            // Play respawn animation
+            battleAnimController?.PlayRespawn();
+
             OnRespawn?.Invoke();
         }
 

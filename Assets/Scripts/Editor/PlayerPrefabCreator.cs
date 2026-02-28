@@ -57,6 +57,7 @@ namespace Pokiwar.Editor
             player.AddComponent<Pokiwar.Evolution.EvolutionManager>();
             player.AddComponent<Pokiwar.Evolution.EvolutionEffectController>();
             player.AddComponent<Pokiwar.Evolution.PetAnimationController>();
+            player.AddComponent<Pokiwar.Evolution.BattleAnimationController>();
 
             // Combat components
             player.AddComponent<Pokiwar.Combat.HealthController>();

@@ -5,11 +5,16 @@ namespace Pokiwar.Evolution
 {
     /// <summary>
     /// Manages player evolution - multi-stage chains, sprite/animation updates, and stat scaling.
-    /// Evolution thresholds: Baby(1), Basic(5), Stage1(15), Stage2(30), Mega(50+)
+    /// Evolution thresholds: Baby(1), Basic(5), Stage1(15), Stage2(30), Mega(100+)
     ///
     /// Animation integration:
     /// - Uses PetAnimationController for breath (idle) and large (attack/evolve) states
+    /// - Uses BattleAnimationController for lunge/recoil/death/respawn movement
     /// - Falls back to SpriteDatabase static sprites if no PetSpriteMapper is assigned
+    ///
+    /// Fixes:
+    /// - AddXP() handles negative XP (poison food) with minimum level guard
+    /// - SetLevel() implemented for proper level reduction on death
     /// </summary>
     public class EvolutionManager : MonoBehaviour
     {
@@ -30,6 +35,7 @@ namespace Pokiwar.Evolution
         private EvolutionTier currentTier;
         private EvolutionEffectController effectController;
         private PetAnimationController animationController;
+        private BattleAnimationController battleAnimController;
 
         // Events
         public event System.Action<int> OnLevelUp;
@@ -42,6 +48,7 @@ namespace Pokiwar.Evolution
 
             effectController = GetComponent<EvolutionEffectController>();
             animationController = GetComponent<PetAnimationController>();
+            battleAnimController = GetComponent<BattleAnimationController>();
 
             playerData = new PlayerData("Player");
             currentTier = EvolutionTier.Baby;
@@ -56,13 +63,11 @@ namespace Pokiwar.Evolution
         {
             if (animationController != null && petSpriteMapper != null)
             {
-                // Use animation system
                 animationController.SetSpriteMapper(petSpriteMapper);
                 animationController.SetPetForTier(EvolutionTier.Baby);
             }
             else if (spriteDatabase != null && playerController != null)
             {
-                // Fallback to static sprite
                 Sprite startingSprite = spriteDatabase.GetRandomSpriteForTier(EvolutionTier.Baby);
                 if (startingSprite == null)
                     startingSprite = spriteDatabase.GetSpriteForLevel(1);
@@ -76,6 +81,14 @@ namespace Pokiwar.Evolution
 
             int previousLevel = playerData.level;
             EvolutionTier previousTier = currentTier;
+
+            // Handle negative XP (poison food) - minimum level is 1
+            if (amount < 0f)
+            {
+                playerData.currentXP = Mathf.Max(0f, playerData.currentXP + amount);
+                // Don't go below level 1
+                return;
+            }
 
             playerData.AddXP(amount);
 
@@ -94,9 +107,38 @@ namespace Pokiwar.Evolution
             }
             else
             {
-                // Update sprite for new level (only if no stage change - stage change handles it)
                 UpdatePlayerSprite();
             }
+        }
+
+        /// <summary>
+        /// Sets the player's level directly (used for death penalty - lose half level).
+        /// Recalculates XP, tier, speed, and scale.
+        /// </summary>
+        public void SetLevel(int newLevel)
+        {
+            newLevel = Mathf.Max(1, newLevel);
+
+            EvolutionTier previousTier = currentTier;
+
+            playerData.level = newLevel;
+            playerData.spriteId = newLevel;
+            playerData.currentXP = 0f;
+            playerData.maxXP = 10f + (newLevel * 5f);
+
+            if (newLevel > playerData.bestLevel)
+                playerData.bestLevel = newLevel;
+
+            EvolutionTier newTier = SpriteDatabase.GetTierForLevel(newLevel);
+            if (newTier != previousTier)
+            {
+                currentTier = newTier;
+                OnEvolutionStageChanged?.Invoke(previousTier, newTier);
+            }
+
+            UpdateSpeedForLevel(newLevel);
+            UpdateScaleForTier(newTier);
+            UpdatePlayerSprite();
         }
 
         private void HandleLevelUp(int newLevel)
@@ -117,16 +159,15 @@ namespace Pokiwar.Evolution
 
             if (animationController != null)
             {
-                // Play full evolution animation, then switch to new tier's pet
                 animationController.PlayEvolutionAnimation(to, () =>
                 {
-                    // After animation completes, update static sprite fallback too
                     UpdatePlayerSprite();
+                    // Update battle anim base scale after evolution
+                    battleAnimController?.UpdateBaseScale(transform.localScale);
                 });
             }
             else
             {
-                // Fallback: just update sprite
                 UpdatePlayerSprite();
             }
 
@@ -147,14 +188,13 @@ namespace Pokiwar.Evolution
         {
             float scale = baseScale + ((int)tier * scalePerTier);
             transform.localScale = Vector3.one * scale;
+            battleAnimController?.UpdateBaseScale(transform.localScale);
         }
 
         private void UpdatePlayerSprite()
         {
-            // If animation controller is active, it manages the sprite
             if (animationController != null && petSpriteMapper != null) return;
 
-            // Fallback to static sprite database
             if (spriteDatabase == null || playerController == null) return;
 
             Sprite sprite = spriteDatabase.GetSpriteForLevel(playerData.spriteId);
@@ -234,7 +274,6 @@ namespace Pokiwar.Evolution
         {
             EvolutionTier nextTier = (EvolutionTier)Mathf.Min((int)currentTier + 1, (int)EvolutionTier.Mega);
 
-            // Try animation controller first
             if (petSpriteMapper != null)
             {
                 PetSpriteData nextPet = petSpriteMapper.GetRandomPetForTier(nextTier);
@@ -242,7 +281,6 @@ namespace Pokiwar.Evolution
                 if (nextPet?.HasLargeSprite == true) return nextPet.largeSprite;
             }
 
-            // Fallback to sprite database
             return spriteDatabase?.GetRandomSpriteForTier(nextTier);
         }
 

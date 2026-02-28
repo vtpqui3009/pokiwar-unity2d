@@ -102,6 +102,16 @@ namespace Pokiwar.Tests
         }
 
         [Test]
+        public void GetTierCount_ReturnsCorrectCount()
+        {
+            mapper.AddOrUpdatePet(new PetSpriteData { petId = "001", tier = EvolutionTier.Baby });
+            mapper.AddOrUpdatePet(new PetSpriteData { petId = "002", tier = EvolutionTier.Baby });
+
+            Assert.AreEqual(2, mapper.GetTierCount(EvolutionTier.Baby));
+            Assert.AreEqual(0, mapper.GetTierCount(EvolutionTier.Mega));
+        }
+
+        [Test]
         public void PetSpriteData_HasBreathAnimation_FalseWhenEmpty()
         {
             PetSpriteData data = new PetSpriteData { petId = "001", breathFrames = null };
