@@ -1,11 +1,22 @@
 using UnityEngine;
+using System.Collections.Generic;
 using Pokiwar.Core;
 using Pokiwar.Evolution;
 
 namespace Pokiwar.Combat
 {
     /// <summary>
-    /// Manages combat between players - attack calculations and defeat rewards.
+    /// Damage type for combat calculations.
+    /// </summary>
+    public enum DamageType
+    {
+        Normal,
+        Critical,
+        Poison
+    }
+
+    /// <summary>
+    /// Manages combat between players - attack calculations, defeat rewards, kill streaks, and combat log.
     /// </summary>
     public class CombatManager : MonoBehaviour
     {
@@ -13,11 +24,21 @@ namespace Pokiwar.Combat
         [SerializeField] private float baseDamage = 10f;
         [SerializeField] private float levelBonusDamage = 2f;
         [SerializeField] private float defeatXPReward = 25f;
-        [SerializeField] private float invincibilityDuration = 1f;
+        [SerializeField] private float criticalChance = 0.15f;
+        [SerializeField] private float criticalMultiplier = 2f;
 
         [Header("Effects")]
         [SerializeField] private GameObject defeatEffectPrefab;
         [SerializeField] private GameObject damageNumberPrefab;
+
+        // Combat log (last 10 events)
+        private readonly Queue<string> combatLog = new Queue<string>();
+        private const int MaxLogEntries = 10;
+
+        // Kill streak tracking per player (clientId -> streak)
+        private readonly Dictionary<ulong, int> killStreaks = new Dictionary<ulong, int>();
+
+        public event System.Action<string, string, int> OnPlayerKilled; // killer, victim, streak
 
         private void OnEnable()
         {
@@ -32,19 +53,37 @@ namespace Pokiwar.Combat
                 Destroy(effect, 2f);
             }
 
+            string killerName = "Unknown";
+            string victimName = defeated.name;
+            int streak = 0;
+
             if (killer != null)
             {
                 EvolutionManager killerEvolution = killer.GetComponent<EvolutionManager>();
                 if (killerEvolution != null)
                 {
-                    killerEvolution.AddXP(defeatXPReward);
+                    killerName = killerEvolution.GetPlayerName();
+                    float xpReward = CalculateDefeatXPReward(killerEvolution.GetLevel(),
+                        defeated.GetComponent<EvolutionManager>()?.GetLevel() ?? 1);
+                    killerEvolution.AddXP(xpReward);
+                    killerEvolution.RecordKill();
+
+                    ShowDamageNumber(defeated.transform.position, $"+{xpReward:F0} XP", Color.green);
                 }
 
-                ShowDamageNumber(defeated.transform.position, defeatXPReward.ToString() + " XP", Color.green);
+                EvolutionManager victimEvolution = defeated.GetComponent<EvolutionManager>();
+                if (victimEvolution != null)
+                {
+                    victimName = victimEvolution.GetPlayerName();
+                    victimEvolution.RecordDeath();
+                }
             }
+
+            AddCombatLogEntry($"{killerName} defeated {victimName}");
+            OnPlayerKilled?.Invoke(killerName, victimName, streak);
         }
 
-        public float CalculateDamage(int attackerLevel, int targetLevel)
+        public float CalculateDamage(int attackerLevel, int targetLevel, DamageType damageType = DamageType.Normal)
         {
             float levelDifference = attackerLevel - targetLevel;
             float damage = baseDamage + (attackerLevel * levelBonusDamage);
@@ -54,27 +93,53 @@ namespace Pokiwar.Combat
             else if (levelDifference < -5)
                 damage *= 0.8f;
 
-            return damage;
+            if (damageType == DamageType.Critical || (damageType == DamageType.Normal && Random.value < criticalChance))
+            {
+                damage *= criticalMultiplier;
+                ShowDamageNumber(Vector3.zero, "CRIT!", Color.red);
+            }
+
+            if (damageType == DamageType.Poison)
+                damage *= 0.5f;
+
+            return Mathf.Max(1f, damage);
+        }
+
+        private float CalculateDefeatXPReward(int killerLevel, int victimLevel)
+        {
+            float reward = defeatXPReward;
+            int levelDiff = victimLevel - killerLevel;
+
+            // Bonus XP for defeating higher-level players
+            if (levelDiff > 0)
+                reward *= 1f + (levelDiff * 0.1f);
+
+            return Mathf.Max(defeatXPReward * 0.5f, reward);
         }
 
         public void ShowDamageNumber(Vector3 position, string text, Color color)
         {
-            if (damageNumberPrefab != null)
+            if (damageNumberPrefab == null) return;
+
+            GameObject dmgNum = Instantiate(damageNumberPrefab, position, Quaternion.identity);
+            TextMesh textMesh = dmgNum.GetComponent<TextMesh>();
+            if (textMesh != null)
             {
-                GameObject dmgNum = Instantiate(damageNumberPrefab, position, Quaternion.identity);
-                TextMesh textMesh = dmgNum.GetComponent<TextMesh>();
-                if (textMesh != null)
-                {
-                    textMesh.text = text;
-                    textMesh.color = color;
-                }
-                Destroy(dmgNum, 1f);
+                textMesh.text = text;
+                textMesh.color = color;
             }
+            Destroy(dmgNum, 1f);
         }
 
-        public float GetDefeatXPReward()
+        private void AddCombatLogEntry(string entry)
         {
-            return defeatXPReward;
+            combatLog.Enqueue(entry);
+            if (combatLog.Count > MaxLogEntries)
+                combatLog.Dequeue();
         }
+
+        public IEnumerable<string> GetCombatLog() => combatLog;
+
+        public float GetDefeatXPReward() => defeatXPReward;
     }
 }

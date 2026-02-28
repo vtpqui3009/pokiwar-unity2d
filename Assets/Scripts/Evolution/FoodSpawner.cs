@@ -4,21 +4,35 @@ using Pokiwar.Core;
 namespace Pokiwar.Evolution
 {
     /// <summary>
-    /// Spawns food items across the map at regular intervals.
+    /// Spawns food items across the map with weighted random types and cluster support.
+    /// Spawn weights: 70% Normal, 20% Rare, 8% Mega, 2% Poison (Speed via rare events).
     /// </summary>
     public class FoodSpawner : MonoBehaviour
     {
         [Header("Spawn Settings")]
         [SerializeField] private GameObject foodPrefab;
-        [SerializeField] private int maxFoodCount = 100;
-        [SerializeField] private float spawnInterval = 0.5f;
-        [SerializeField] private float minDistanceFromPlayer = 5f;
+        [SerializeField] private int maxFoodCount = 200;
+        [SerializeField] private float spawnInterval = 0.3f;
+        [SerializeField] private float minDistanceFromPlayer = 3f;
 
-        [Header("Food Types")]
-        [SerializeField] private Sprite[] foodSprites;
-        [SerializeField] private float[] foodXPValues = { 1f, 2f, 5f, 10f };
+        [Header("Cluster Settings")]
+        [SerializeField] private bool enableClusters = true;
+        [SerializeField] private int clusterSize = 5;
+        [SerializeField] private float clusterRadius = 3f;
+        [SerializeField] private float clusterSpawnChance = 0.15f;
+
+        [Header("Rare Food Events")]
+        [SerializeField] private float megaFoodEventInterval = 30f;
+        [SerializeField] private int megaFoodEventCount = 5;
+
+        // Spawn weights (must sum to 100)
+        private const float WeightNormal = 70f;
+        private const float WeightRare   = 20f;
+        private const float WeightMega   = 8f;
+        private const float WeightPoison = 2f;
 
         private float spawnTimer;
+        private float megaEventTimer;
 
         private void Update()
         {
@@ -28,20 +42,59 @@ namespace Pokiwar.Evolution
                 spawnTimer = 0f;
                 TrySpawnFood();
             }
+
+            megaEventTimer += Time.deltaTime;
+            if (megaEventTimer >= megaFoodEventInterval)
+            {
+                megaEventTimer = 0f;
+                SpawnMegaFoodEvent();
+            }
         }
 
         private void TrySpawnFood()
         {
             GameObject[] food = GameObject.FindGameObjectsWithTag("Food");
-            if (food.Length >= maxFoodCount)
-                return;
+            if (food.Length >= maxFoodCount) return;
 
-            Vector2 spawnPosition = GetRandomSpawnPosition();
-            SpawnFood(spawnPosition);
+            if (enableClusters && Random.value < clusterSpawnChance)
+            {
+                SpawnCluster();
+            }
+            else
+            {
+                Vector2 spawnPos = GetRandomSpawnPosition();
+                SpawnFoodAt(spawnPos, GetWeightedFoodType());
+            }
+        }
+
+        private void SpawnCluster()
+        {
+            Vector2 center = GetRandomSpawnPosition();
+            for (int i = 0; i < clusterSize; i++)
+            {
+                Vector2 offset = Random.insideUnitCircle * clusterRadius;
+                Vector2 pos = center + offset;
+                if (GameManager.Instance != null)
+                    pos = GameManager.Instance.ClampToBounds(pos);
+
+                SpawnFoodAt(pos, FoodType.Normal);
+            }
+        }
+
+        private void SpawnMegaFoodEvent()
+        {
+            for (int i = 0; i < megaFoodEventCount; i++)
+            {
+                Vector2 pos = GetRandomSpawnPosition();
+                SpawnFoodAt(pos, FoodType.Mega);
+            }
         }
 
         private Vector2 GetRandomSpawnPosition()
         {
+            if (GameManager.Instance == null)
+                return Vector2.zero;
+
             Vector2 position;
             int attempts = 0;
             const int maxAttempts = 10;
@@ -50,85 +103,84 @@ namespace Pokiwar.Evolution
             {
                 position = GameManager.Instance.GetRandomPosition();
                 attempts++;
-            } while (IsTooCloseToPlayer(position) && attempts < maxAttempts);
+            } while (IsTooCloseToAnyPlayer(position) && attempts < maxAttempts);
 
             return position;
         }
 
-        private bool IsTooCloseToPlayer(Vector2 position)
+        private bool IsTooCloseToAnyPlayer(Vector2 position)
         {
-            GameObject player = GameObject.FindGameObjectWithTag("Player");
-            if (player == null)
-                return false;
-
-            return Vector2.Distance(position, player.transform.position) < minDistanceFromPlayer;
+            GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
+            foreach (GameObject player in players)
+            {
+                if (Vector2.Distance(position, player.transform.position) < minDistanceFromPlayer)
+                    return true;
+            }
+            return false;
         }
 
-        private void SpawnFood(Vector2 position)
+        private void SpawnFoodAt(Vector2 position, FoodType type)
         {
-            if (foodPrefab == null)
+            GameObject food;
+
+            if (foodPrefab != null)
             {
-                CreateDefaultFood(position);
-                return;
+                food = Instantiate(foodPrefab, position, Quaternion.identity);
+            }
+            else
+            {
+                food = CreateDefaultFoodObject(position);
             }
 
-            GameObject food = Instantiate(foodPrefab, position, Quaternion.identity);
-            ConfigureFood(food);
+            FoodItem foodItem = food.GetComponent<FoodItem>();
+            if (foodItem != null)
+                foodItem.SetFoodType(type);
+
+            food.tag = "Food";
         }
 
-        private void CreateDefaultFood(Vector2 position)
+        private GameObject CreateDefaultFoodObject(Vector2 position)
         {
             GameObject food = new GameObject("Food");
             food.transform.position = position;
             food.tag = "Food";
 
-            food.AddComponent<SpriteRenderer>();
-            food.AddComponent<CircleCollider2D>();
-            food.AddComponent<Rigidbody2D>();
+            SpriteRenderer sr = food.AddComponent<SpriteRenderer>();
+            sr.sortingOrder = 1;
 
-            FoodItem foodItem = food.AddComponent<FoodItem>();
-            foodItem.SetXPValue(RandomFoodValue());
+            CircleCollider2D col = food.AddComponent<CircleCollider2D>();
+            col.isTrigger = true;
+            col.radius = 0.3f;
 
-            ConfigureFood(food);
+            Rigidbody2D rb = food.AddComponent<Rigidbody2D>();
+            rb.gravityScale = 0f;
+            rb.linearDamping = 5f;
+
+            food.AddComponent<FoodItem>();
+            return food;
         }
 
-        private void ConfigureFood(GameObject food)
+        private FoodType GetWeightedFoodType()
         {
-            SpriteRenderer sr = food.GetComponent<SpriteRenderer>();
-            CircleCollider2D collider = food.GetComponent<CircleCollider2D>();
-            Rigidbody2D rb = food.GetComponent<Rigidbody2D>();
+            float roll = Random.Range(0f, 100f);
 
-            if (sr != null && foodSprites != null && foodSprites.Length > 0)
-            {
-                sr.sprite = foodSprites[Random.Range(0, foodSprites.Length)];
-                sr.sortingOrder = 1;
-            }
+            if (roll < WeightNormal)
+                return FoodType.Normal;
+            if (roll < WeightNormal + WeightRare)
+                return FoodType.Rare;
+            if (roll < WeightNormal + WeightRare + WeightMega)
+                return FoodType.Mega;
 
-            if (collider != null)
-            {
-                collider.isTrigger = true;
-                collider.radius = 0.3f;
-            }
-
-            if (rb != null)
-            {
-                rb.gravityScale = 0f;
-                rb.linearDamping = 5f;
-            }
-        }
-
-        private float RandomFoodValue()
-        {
-            return foodXPValues[Random.Range(0, foodXPValues.Length)];
+            return FoodType.Poison;
         }
 
         private void OnDrawGizmosSelected()
         {
+            if (GameManager.Instance == null) return;
+
             Gizmos.color = Color.yellow;
-            if (GameManager.Instance != null)
-            {
-                Gizmos.DrawWireCube(transform.position, new Vector3(GameManager.Instance.MapWidth, GameManager.Instance.MapHeight, 0));
-            }
+            Gizmos.DrawWireCube(transform.position,
+                new Vector3(GameManager.Instance.MapWidth, GameManager.Instance.MapHeight, 0));
         }
     }
 }

@@ -4,7 +4,7 @@ using UnityEngine.InputSystem;
 namespace Pokiwar.Core
 {
     /// <summary>
-    /// Handles player movement and input.
+    /// Handles player movement and input. Supports keyboard and mobile joystick input.
     /// </summary>
     [RequireComponent(typeof(Rigidbody2D))]
     public class PlayerController : MonoBehaviour
@@ -20,14 +20,18 @@ namespace Pokiwar.Core
         private Rigidbody2D rb;
         private Vector2 moveInput;
         private Camera mainCamera;
+        private float baseSpeed;
 
         public float MoveSpeed => moveSpeed;
-        public Vector2 Velocity => rb.velocity;
+        public float BaseSpeed => baseSpeed;
+        public Vector2 Velocity => rb != null ? rb.linearVelocity : Vector2.zero;
+        public bool IsMoving => moveInput != Vector2.zero;
 
         private void Awake()
         {
             rb = GetComponent<Rigidbody2D>();
             mainCamera = Camera.main;
+            baseSpeed = moveSpeed;
 
             if (spriteRenderer == null)
                 spriteRenderer = GetComponent<SpriteRenderer>();
@@ -35,7 +39,7 @@ namespace Pokiwar.Core
 
         private void Update()
         {
-            HandleInput();
+            HandleKeyboardInput();
             UpdateFacingDirection();
             ClampToMapBounds();
         }
@@ -46,7 +50,7 @@ namespace Pokiwar.Core
             ApplyFriction();
         }
 
-        private void HandleInput()
+        private void HandleKeyboardInput()
         {
             float moveX = 0f;
             float moveY = 0f;
@@ -63,7 +67,9 @@ namespace Pokiwar.Core
                     moveX = 1f;
             }
 
-            moveInput = new Vector2(moveX, moveY).normalized;
+            // Only override if keyboard has input (mobile joystick can also set moveInput)
+            if (moveX != 0f || moveY != 0f)
+                moveInput = new Vector2(moveX, moveY).normalized;
         }
 
         private void ApplyMovement()
@@ -71,7 +77,7 @@ namespace Pokiwar.Core
             if (moveInput != Vector2.zero)
             {
                 Vector2 targetVelocity = moveInput * moveSpeed;
-                rb.velocity = Vector2.Lerp(rb.velocity, targetVelocity, acceleration * Time.fixedDeltaTime);
+                rb.linearVelocity = Vector2.Lerp(rb.linearVelocity, targetVelocity, acceleration * Time.fixedDeltaTime);
             }
         }
 
@@ -79,12 +85,14 @@ namespace Pokiwar.Core
         {
             if (moveInput == Vector2.zero)
             {
-                rb.velocity = Vector2.Lerp(rb.velocity, Vector2.zero, friction * Time.fixedDeltaTime);
+                rb.linearVelocity = Vector2.Lerp(rb.linearVelocity, Vector2.zero, friction * Time.fixedDeltaTime);
             }
         }
 
         private void UpdateFacingDirection()
         {
+            if (spriteRenderer == null) return;
+
             if (moveInput.x < 0)
                 spriteRenderer.flipX = true;
             else if (moveInput.x > 0)
@@ -93,23 +101,29 @@ namespace Pokiwar.Core
 
         private void ClampToMapBounds()
         {
-            if (GameManager.Instance != null)
+            if (GameManager.Instance == null) return;
+
+            Vector2 pos = transform.position;
+            if (!GameManager.Instance.IsPositionInBounds(pos))
             {
-                Vector2 pos = transform.position;
-                if (!GameManager.Instance.IsPositionInBounds(pos))
-                {
-                    float halfWidth = GameManager.Instance.MapWidth / 2f;
-                    float halfHeight = GameManager.Instance.MapHeight / 2f;
-                    pos.x = Mathf.Clamp(pos.x, -halfWidth, halfWidth);
-                    pos.y = Mathf.Clamp(pos.y, -halfHeight, halfHeight);
-                    transform.position = pos;
-                }
+                transform.position = GameManager.Instance.ClampToBounds(pos);
             }
         }
 
         public void SetMoveSpeed(float speed)
         {
-            moveSpeed = speed;
+            moveSpeed = Mathf.Max(0f, speed);
+        }
+
+        public void ResetMoveSpeed()
+        {
+            moveSpeed = baseSpeed;
+        }
+
+        public void SetBaseSpeed(float speed)
+        {
+            baseSpeed = Mathf.Max(0f, speed);
+            moveSpeed = baseSpeed;
         }
 
         public void SetSprite(Sprite sprite)
@@ -121,6 +135,11 @@ namespace Pokiwar.Core
         public void SetInput(Vector2 input)
         {
             moveInput = input.normalized;
+        }
+
+        public void ClearInput()
+        {
+            moveInput = Vector2.zero;
         }
     }
 }
